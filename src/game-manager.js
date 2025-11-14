@@ -1,16 +1,18 @@
 // CryptoJS is loaded globally from CDN
 const CryptoJS = window.CryptoJS;
 
-export class GameManager {
+import { EventEmitter } from './utils/event-emitter.js'
+
+export class GameManager extends EventEmitter {
   constructor() {
-    this.events = {}
+    super()
     this.sessionId = null
     this.localPeerId = null
     this.playerData = null
     this.players = new Map()
     this.votesRevealed = false
     this.reactionTimers = new Map() // Track reaction expiration timers
-    
+
     this.voteCards = ['0', '½', '1', '2', '3', '5', '8', '13', '20', '40', '100', '?']
   }
 
@@ -496,7 +498,7 @@ export class GameManager {
     this.playerData = null
     this.players.clear()
     this.votesRevealed = false
-    
+
     // Clear all reaction timers
     for (const timer of this.reactionTimers.values()) {
       clearTimeout(timer)
@@ -504,16 +506,9 @@ export class GameManager {
     this.reactionTimers.clear()
   }
 
-  on(event, callback) {
-    if (!this.events[event]) {
-      this.events[event] = []
-    }
-    this.events[event].push(callback)
-  }
-
-  emit(event, ...args) {
-    if (this.events[event]) {
-      this.events[event].forEach(callback => callback(...args))
-    }
+  cleanup() {
+    this.reset()
+    // Clean up event emitter listeners
+    this.destroy()
   }
 }

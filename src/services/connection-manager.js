@@ -1,7 +1,9 @@
 // Connection Manager for handling network states and graceful degradation
-export class ConnectionManager {
+import { EventEmitter } from '../utils/event-emitter.js'
+
+export class ConnectionManager extends EventEmitter {
   constructor() {
-    this.events = {}
+    super()
     this.isOnline = navigator.onLine
     this.connectionQuality = 'good' // good, poor, offline
     this.retryAttempts = 0
@@ -10,7 +12,7 @@ export class ConnectionManager {
     this.lastHeartbeat = Date.now()
     this.heartbeatInterval = null
     this.reconnectTimeout = null
-    
+
     this.setupEventListeners()
     this.startHeartbeat()
   }
@@ -83,27 +85,29 @@ export class ConnectionManager {
 
   checkConnectionHealth() {
     if (!this.isOnline) return
-    
-    // Simple connection test using a small image request
+
+    // Test actual network connectivity using a real external resource
     const startTime = Date.now()
     const img = new Image()
-    
+
     const timeout = setTimeout(() => {
       this.handleConnectionTest(false, Date.now() - startTime)
     }, 5000) // 5 second timeout
-    
+
     img.onload = () => {
       clearTimeout(timeout)
       this.handleConnectionTest(true, Date.now() - startTime)
     }
-    
+
     img.onerror = () => {
       clearTimeout(timeout)
       this.handleConnectionTest(false, Date.now() - startTime)
     }
-    
-    // Use a small, fast-loading image (1x1 pixel)
-    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+    // Use a small, reliable external image with cache-busting to test real connectivity
+    // Using a 1x1 transparent pixel from a reliable CDN
+    const cacheBuster = Date.now()
+    img.src = `https://www.google.com/favicon.ico?_=${cacheBuster}`
   }
 
   handleConnectionTest(success, responseTime) {
@@ -219,31 +223,5 @@ export class ConnectionManager {
     window.removeEventListener('online', this.handleOnlineStatusChange)
     window.removeEventListener('offline', this.handleOnlineStatusChange)
     document.removeEventListener('visibilitychange', this.handlePageVisible)
-  }
-
-  // Event system
-  on(event, callback) {
-    if (!this.events[event]) {
-      this.events[event] = []
-    }
-    this.events[event].push(callback)
-  }
-
-  off(event, callback) {
-    if (this.events[event]) {
-      this.events[event] = this.events[event].filter(cb => cb !== callback)
-    }
-  }
-
-  emit(event, data) {
-    if (this.events[event]) {
-      this.events[event].forEach(callback => {
-        try {
-          callback(data)
-        } catch (error) {
-          console.warn('Error in connection manager event handler:', error)
-        }
-      })
-    }
   }
 }
