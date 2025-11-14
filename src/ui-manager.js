@@ -1083,6 +1083,181 @@ export class UIManager {
     this.showLoading(false)
   }
 
+  showConnecting(message = 'Connecting...') {
+    // Remove any existing connecting indicator
+    const existing = document.getElementById('connecting-indicator')
+    if (existing) {
+      existing.remove()
+    }
+
+    // Create connecting indicator
+    const connectingDiv = document.createElement('div')
+    connectingDiv.id = 'connecting-indicator'
+    connectingDiv.className = 'connecting-indicator'
+    connectingDiv.style.cssText = `
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2000;
+      background: rgba(59, 130, 246, 0.95);
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    `
+    connectingDiv.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 50 50" style="animation: spin 1s linear infinite;">
+        <circle cx="25" cy="25" r="20" fill="none" stroke="white" stroke-width="5" stroke-dasharray="31.4 31.4" transform="rotate(-90 25 25)"/>
+      </svg>
+      <span>${message}</span>
+      <style>
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      </style>
+    `
+
+    document.body.appendChild(connectingDiv)
+  }
+
+  hideConnecting() {
+    const connectingDiv = document.getElementById('connecting-indicator')
+    if (connectingDiv) {
+      connectingDiv.remove()
+    }
+  }
+
+  showConnectionError(options) {
+    const { title, message, sessionId, onRetry, onJoinNew, onGoHome } = options
+
+    // Remove any existing error modal
+    const existing = document.getElementById('connection-error-modal')
+    if (existing) {
+      existing.remove()
+    }
+
+    // Create modal overlay
+    const modal = document.createElement('div')
+    modal.id = 'connection-error-modal'
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 3000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    `
+
+    // Create modal content
+    const modalContent = document.createElement('div')
+    modalContent.style.cssText = `
+      background: var(--card-bg, #1e293b);
+      color: var(--text-color, #e2e8f0);
+      padding: 32px;
+      border-radius: 12px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+    `
+
+    modalContent.innerHTML = `
+      <div style="text-align: center;">
+        <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
+        <h2 style="font-size: 24px; margin-bottom: 12px; color: var(--text-color, #e2e8f0);">${title}</h2>
+        <p style="font-size: 16px; margin-bottom: 24px; color: var(--text-secondary, #94a3b8); line-height: 1.5;">
+          ${message}
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <button id="retry-button" style="
+            background: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+          ">
+            🔄 Retry Connection
+          </button>
+          <button id="join-new-button" style="
+            background: #6366f1;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+          ">
+            ✏️ Join as New User
+          </button>
+          <button id="go-home-button" style="
+            background: transparent;
+            color: var(--text-secondary, #94a3b8);
+            border: 2px solid var(--text-secondary, #94a3b8);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+          ">
+            🏠 Go Home
+          </button>
+        </div>
+      </div>
+    `
+
+    modal.appendChild(modalContent)
+    document.body.appendChild(modal)
+
+    // Add event listeners
+    document.getElementById('retry-button').addEventListener('click', () => {
+      if (onRetry) onRetry()
+    })
+
+    document.getElementById('join-new-button').addEventListener('click', () => {
+      if (onJoinNew) onJoinNew()
+    })
+
+    document.getElementById('go-home-button').addEventListener('click', () => {
+      if (onGoHome) onGoHome()
+    })
+
+    // Add hover effects
+    const buttons = modalContent.querySelectorAll('button')
+    buttons.forEach(btn => {
+      btn.addEventListener('mouseenter', () => {
+        btn.style.transform = 'scale(1.02)'
+        btn.style.opacity = '0.9'
+      })
+      btn.addEventListener('mouseleave', () => {
+        btn.style.transform = 'scale(1)'
+        btn.style.opacity = '1'
+      })
+    })
+  }
+
+  hideConnectionError() {
+    const modal = document.getElementById('connection-error-modal')
+    if (modal) {
+      modal.remove()
+    }
+  }
+
   showVotingStats() {
     if (this.currentPage !== 'game') return
 

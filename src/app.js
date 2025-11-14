@@ -179,27 +179,34 @@ export class RapidPlanningApp {
 
   async createSession(playerData) {
     return await this.errorHandler.safeAsync(async () => {
+      // Show connecting indicator
+      this.uiManager.showConnecting('Creating session...')
+
       // Only cleanup if we're switching from one session to another
       if (this.gameManager.sessionId) {
         this.cleanup()
       }
-      
+
       const sessionId = this.generateSessionId()
-      
+
       // Save session data to localStorage
       this.saveSessionData(sessionId, playerData)
-      
+
       // Set sessionId first to prevent route handler from triggering joinSession
       this.gameManager.setSessionId(sessionId)
-      
+
       // Only create new connection if we don't have one already
       if (!this.peerManager.peer || !this.peerManager.peer.open) {
         await this.peerManager.createSession(sessionId)
       }
+
+      // Hide connecting indicator on success
+      this.uiManager.hideConnecting()
+
       this.router.navigate('session', sessionId)
       this.uiManager.showGamePage(sessionId)
       this.gameManager.createSession(sessionId, playerData)
-      
+
       // Restore pending game state if available (for host refresh)
       if (this.pendingGameState) {
         setTimeout(() => {
@@ -207,56 +214,108 @@ export class RapidPlanningApp {
           this.pendingGameState = null
         }, 1500)
       }
-      
+
       // Track room creation
       analytics.trackRoomCreated()
       analytics.trackUserJoined(true) // true = host
     }, { operation: 'createSession' })
   }
 
-  async rejoinSessionBackground(sessionId, playerData) {
+  async rejoinSessionBackground(sessionId, playerData, retryCount = 0) {
+    const maxRetries = 2
+    const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 5000) // Exponential backoff, max 5s
+
     try {
+      // Show connecting status
+      this.uiManager.showConnecting('Connecting to session...')
+
       // Only create new connection if we don't have one already
       if (!this.peerManager.peer || !this.peerManager.peer.open) {
         await this.peerManager.joinSession(sessionId)
       }
-      
+
       // Don't call gameManager.joinSession() as it would add local player again
       // The local player is already added by setPlayerData() above
-      
+
+      // Hide connecting status on success
+      this.uiManager.hideConnecting()
+
       // Track participant joining
       analytics.trackUserJoined(false) // false = participant
     } catch (error) {
-      console.warn('Failed to rejoin session in background:', error.message)
-      // Don't navigate away on peer connection failures during refresh
+      console.error('Failed to rejoin session:', error.message)
+
+      // Hide connecting status
+      this.uiManager.hideConnecting()
+
+      // Retry logic
+      if (retryCount < maxRetries) {
+        console.log(`Retrying connection (attempt ${retryCount + 1}/${maxRetries}) in ${retryDelay}ms...`)
+        this.uiManager.showConnecting(`Connection failed. Retrying (${retryCount + 1}/${maxRetries})...`)
+
+        await new Promise(resolve => setTimeout(resolve, retryDelay))
+        return this.rejoinSessionBackground(sessionId, playerData, retryCount + 1)
+      }
+
+      // All retries failed - show error with options
+      this.uiManager.showConnectionError({
+        title: 'Unable to Connect',
+        message: error.message || 'Failed to connect to the session.',
+        sessionId: sessionId,
+        onRetry: () => {
+          // Clear the error and retry from scratch
+          this.uiManager.hideConnectionError()
+          // Clean up stale localStorage if connection keeps failing
+          if (retryCount >= maxRetries) {
+            this.clearSessionData(sessionId)
+          }
+          this.rejoinSessionBackground(sessionId, playerData, 0)
+        },
+        onJoinNew: () => {
+          // Clear localStorage and show join prompt
+          this.clearSessionData(sessionId)
+          this.uiManager.hideConnectionError()
+          this.uiManager.showJoinPrompt(sessionId)
+        },
+        onGoHome: () => {
+          this.clearSessionData(sessionId)
+          this.router.navigate('home')
+        }
+      })
     }
   }
 
   async joinSession(sessionId, playerData = null) {
     try {
+      // Show connecting indicator
+      this.uiManager.showConnecting('Connecting to session...')
+
       // Only cleanup if we're switching from one session to another
       if (this.gameManager.sessionId && String(this.gameManager.sessionId) !== String(sessionId)) {
         this.cleanup()
       }
-      
+
       if (playerData) {
         // Save session data to localStorage
         this.saveSessionData(sessionId, playerData)
         this.gameManager.setPlayerData(playerData)
       }
-      
+
       // Set session ID first to prevent route handler from triggering joinSession again
       this.gameManager.setSessionId(sessionId)
-      
+
       // Only create new connection if we don't have one already
       if (!this.peerManager.peer || !this.peerManager.peer.open) {
         await this.peerManager.joinSession(sessionId)
       }
-      
+
+      // Hide connecting indicator on success
+      this.uiManager.hideConnecting()
+
       this.router.navigate('session', sessionId)
       this.uiManager.showGamePage(sessionId)
       this.gameManager.joinSession(sessionId)
-      
+
       // Restore pending game state if available
       if (this.pendingGameState) {
         setTimeout(() => {
@@ -264,12 +323,22 @@ export class RapidPlanningApp {
           this.pendingGameState = null
         }, 1500) // Give UI more time to fully render
       }
-      
+
       // Track participant joining
       analytics.trackUserJoined(false) // false = participant
     } catch (error) {
+      // Hide connecting indicator
+      this.uiManager.hideConnecting()
+
+      console.error('Failed to join session:', error)
+
+      // Show user-friendly error message
       this.uiManager.showError('Failed to join session: ' + error.message)
-      this.router.navigate('home')
+
+      // Navigate back to home after a short delay
+      setTimeout(() => {
+        this.router.navigate('home')
+      }, 3000)
     }
   }
 
@@ -354,6 +423,17 @@ export class RapidPlanningApp {
     } catch (e) {
       console.warn('Failed to load session data:', e)
       return null
+    }
+  }
+
+  clearSessionData(sessionId) {
+    try {
+      const sessions = JSON.parse(localStorage.getItem('rapidPlanningSessions') || '{}')
+      delete sessions[sessionId]
+      localStorage.setItem('rapidPlanningSessions', JSON.stringify(sessions))
+      console.log(`Cleared session data for session ${sessionId}`)
+    } catch (e) {
+      console.warn('Failed to clear session data:', e)
     }
   }
 
