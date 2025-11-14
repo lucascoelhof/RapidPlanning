@@ -16,12 +16,21 @@ export class PeerManager {
       console.log('Already connected to peer network, not creating new connection')
       return Promise.resolve()
     }
-    
+
+    // Clean up any stale peer connection
+    if (this.peer && !this.peer.open) {
+      console.log('Cleaning up stale peer connection')
+      this.cleanupPeer()
+    }
+
     this.sessionId = sessionId
     this.isHost = true
-    
+
     return new Promise((resolve, reject) => {
       console.log('Creating new peer connection for hosting session')
+
+      let resolved = false
+
       // Try the default PeerJS cloud service first
       this.peer = new Peer(`host-${sessionId}`, {
         debug: 1,
@@ -36,15 +45,16 @@ export class PeerManager {
       this.peer.on('open', (id) => {
         console.log('Host peer connected with ID:', id)
         this.emit('connected', id)
+        resolved = true
         resolve()
       })
 
       this.peer.on('connection', (conn) => {
         console.log('Received connection request from:', conn.peer, 'Open:', conn.open)
-        
+
         // Set up handlers for the connection
         this.setupConnectionHandlers(conn)
-        
+
         // Handle the connection when it opens
         if (conn.open) {
           console.log('Incoming connection already open')
@@ -60,14 +70,18 @@ export class PeerManager {
 
       this.peer.on('error', (error) => {
         console.error('Peer error:', error)
-        reject(error)
+        if (!resolved) {
+          this.cleanupPeer()
+          reject(this.createFriendlyError(error))
+        }
       })
 
       setTimeout(() => {
-        if (!this.peer.open) {
-          reject(new Error('Connection timeout'))
+        if (!resolved) {
+          this.cleanupPeer()
+          reject(new Error('Connection timeout - Unable to connect to the peer network. Please check your internet connection and try again.'))
         }
-      }, 10000)
+      }, 15000) // Increased timeout to 15 seconds
     })
   }
 
@@ -77,12 +91,22 @@ export class PeerManager {
       console.log('Already connected to peer network, not creating new connection')
       return Promise.resolve()
     }
-    
+
+    // Clean up any stale peer connection
+    if (this.peer && !this.peer.open) {
+      console.log('Cleaning up stale peer connection')
+      this.cleanupPeer()
+    }
+
     this.sessionId = sessionId
     this.isHost = false
-    
+
     return new Promise((resolve, reject) => {
       console.log('Creating new peer connection for joining session')
+
+      let peerResolved = false
+      let hostConnectionResolved = false
+
       this.peer = new Peer({
         debug: 1,
         config: {
@@ -96,42 +120,51 @@ export class PeerManager {
       this.peer.on('open', (id) => {
         console.log('Client peer connected with ID:', id)
         this.emit('connected', id)
-        
+        peerResolved = true
+
         // Connect to host
-        const hostConnection = this.peer.connect(`host-${sessionId}`)
-        
+        const hostConnection = this.peer.connect(`host-${sessionId}`, {
+          reliable: true
+        })
+
         // Check if connection is already open
         if (hostConnection.open) {
           console.log('Connection to host already open')
           this.handleOutgoingConnection(hostConnection)
+          hostConnectionResolved = true
           resolve()
         } else {
           hostConnection.on('open', () => {
             console.log('Connected to host')
             this.handleOutgoingConnection(hostConnection)
+            hostConnectionResolved = true
             resolve()
           })
         }
 
         hostConnection.on('error', (error) => {
           console.error('Connection to host failed:', error)
-          reject(error)
+          if (!hostConnectionResolved) {
+            this.cleanupPeer()
+            reject(new Error('Failed to connect to session - The host may be offline or the session ID is invalid.'))
+          }
         })
 
         setTimeout(() => {
-          if (!hostConnection.open) {
+          if (!hostConnectionResolved) {
             console.error('Connection timeout - host connection did not open')
-            reject(new Error('Failed to connect to session'))
+            this.cleanupPeer()
+            reject(new Error('Connection timeout - Unable to reach the session host. The host may be offline or the session may not exist.'))
           }
-        }, 10000)
+        }, 15000) // Increased timeout to 15 seconds
       })
 
       this.peer.on('connection', (conn) => {
         console.log('Received connection request from:', conn.peer, 'Open:', conn.open)
-        
+
         // Set up handlers for the connection
         this.setupConnectionHandlers(conn)
-        
+
         // Handle the connection when it opens
         if (conn.open) {
           console.log('Incoming connection already open')
@@ -147,8 +180,19 @@ export class PeerManager {
 
       this.peer.on('error', (error) => {
         console.error('Peer error:', error)
-        reject(error)
+        if (!peerResolved) {
+          this.cleanupPeer()
+          reject(this.createFriendlyError(error))
+        }
       })
+
+      // Timeout for initial peer creation
+      setTimeout(() => {
+        if (!peerResolved) {
+          this.cleanupPeer()
+          reject(new Error('Connection timeout - Unable to connect to the peer network. Please check your internet connection and try again.'))
+        }
+      }, 15000)
     })
   }
 
@@ -277,11 +321,61 @@ export class PeerManager {
       conn.close()
     })
     this.connections.clear()
-    
+
     if (this.peer) {
       this.peer.destroy()
       this.peer = null
     }
+  }
+
+  cleanupPeer() {
+    // Clean up connections without destroying peer
+    this.connections.forEach((conn) => {
+      try {
+        conn.close()
+      } catch (e) {
+        console.warn('Error closing connection:', e)
+      }
+    })
+    this.connections.clear()
+
+    // Destroy peer if it exists
+    if (this.peer) {
+      try {
+        this.peer.destroy()
+      } catch (e) {
+        console.warn('Error destroying peer:', e)
+      }
+      this.peer = null
+    }
+  }
+
+  createFriendlyError(error) {
+    const message = error?.message || error?.type || 'Unknown error'
+
+    // Map PeerJS error types to user-friendly messages
+    if (message.includes('peer-unavailable') || message.includes('unavailable-id')) {
+      return new Error('Session not found - The session may have ended or the ID is incorrect.')
+    }
+
+    if (message.includes('network') || message.includes('disconnected')) {
+      return new Error('Network error - Please check your internet connection and try again.')
+    }
+
+    if (message.includes('browser-incompatible')) {
+      return new Error('Browser not supported - Please use a modern browser like Chrome, Firefox, or Safari.')
+    }
+
+    if (message.includes('invalid-id') || message.includes('invalid-key')) {
+      return new Error('Invalid session - Please check the session link and try again.')
+    }
+
+    if (message.includes('ssl-unavailable')) {
+      return new Error('Secure connection required - Please make sure you\'re using HTTPS.')
+    }
+
+    // Return original error with additional context
+    return new Error(`Connection failed: ${message}. Please try refreshing the page or creating a new session.`)
   }
 
   on(event, callback) {
