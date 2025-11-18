@@ -5,7 +5,6 @@ import { UIManager } from './ui-manager.js'
 import { ConnectionManager } from './services/connection-manager.js'
 import { ErrorHandler } from './services/error-handler.js'
 import { analytics } from './services/analytics.js'
-import { safeStorage } from './utils/safe-storage.js'
 
 export class RapidPlanningApp {
   constructor() {
@@ -16,12 +15,7 @@ export class RapidPlanningApp {
     this.uiManager = new UIManager(this.gameManager, this.connectionManager)
     this.errorHandler = new ErrorHandler(this.uiManager)
     this.pendingGameState = null
-
-    // Store handler reference for cleanup
-    this.beforeunloadHandler = () => {
-      this.cleanup()
-    }
-
+    
     this.setupEventListeners()
   }
 
@@ -30,9 +24,11 @@ export class RapidPlanningApp {
     this.uiManager.init()
     // Then initialize router which will trigger route events
     this.router.init()
-
+    
     // Clean up connections when page is closed/refreshed
-    window.addEventListener('beforeunload', this.beforeunloadHandler)
+    window.addEventListener('beforeunload', () => {
+      this.cleanup()
+    })
   }
 
   setupEventListeners() {
@@ -358,11 +354,6 @@ export class RapidPlanningApp {
   }
 
   handleConnectionRestored() {
-    // Resume peer connections and flush queued messages
-    if (this.peerManager) {
-      this.peerManager.resumeConnections()
-    }
-
     // Try to reconnect to the session if we were in one
     if (this.gameManager.sessionId && this.gameManager.playerData) {
       this.connectionManager.attemptReconnection(() => {
@@ -376,31 +367,19 @@ export class RapidPlanningApp {
     if (this.gameManager.sessionId) {
       analytics.trackRoomLeft()
     }
-
-    // Clean up all managers
-    if (this.peerManager) {
-      this.peerManager.cleanup()
-    }
-
-    if (this.gameManager) {
-      this.gameManager.cleanup()
-    }
-
-    if (this.uiManager) {
-      this.uiManager.cleanup()
-    }
-
+    
+    // Disconnect from peers
+    this.peerManager.disconnect()
+    
+    // Reset game manager
+    this.gameManager.reset()
+    
+    // Hide loading states
+    this.uiManager.hideLoading()
+    
+    // Cleanup connection manager
     if (this.connectionManager) {
       this.connectionManager.destroy()
-    }
-
-    if (this.router) {
-      this.router.cleanup()
-    }
-
-    // Remove beforeunload listener
-    if (this.beforeunloadHandler) {
-      window.removeEventListener('beforeunload', this.beforeunloadHandler)
     }
   }
 
@@ -409,43 +388,53 @@ export class RapidPlanningApp {
   }
 
   saveSessionData(sessionId, playerData, gameState = null) {
-    const sessions = safeStorage.getJSON('rapidPlanningSessions', {})
-
-    // Get existing session data or create new
-    const existingSession = sessions[sessionId] || {}
-
-    sessions[sessionId] = {
-      playerData: playerData || existingSession.playerData,
-      gameState: gameState || existingSession.gameState,
-      joinedAt: existingSession.joinedAt || Date.now(),
-      lastUpdated: Date.now()
-    }
-
-    // Keep only last 10 sessions to avoid storage bloat
-    const sessionKeys = Object.keys(sessions)
-    if (sessionKeys.length > 10) {
-      const sortedKeys = sessionKeys.sort((a, b) => sessions[a].joinedAt - sessions[b].joinedAt)
-      for (let i = 0; i < sessionKeys.length - 10; i++) {
-        delete sessions[sortedKeys[i]]
+    try {
+      const sessions = JSON.parse(localStorage.getItem('rapidPlanningSessions') || '{}')
+      
+      // Get existing session data or create new
+      const existingSession = sessions[sessionId] || {}
+      
+      sessions[sessionId] = {
+        playerData: playerData || existingSession.playerData,
+        gameState: gameState || existingSession.gameState,
+        joinedAt: existingSession.joinedAt || Date.now(),
+        lastUpdated: Date.now()
       }
-    }
-
-    const saved = safeStorage.setJSON('rapidPlanningSessions', sessions)
-    if (!saved) {
-      console.warn('Session data saved to memory only (localStorage unavailable or full)')
+      
+      // Keep only last 10 sessions to avoid localStorage bloat
+      const sessionKeys = Object.keys(sessions)
+      if (sessionKeys.length > 10) {
+        const sortedKeys = sessionKeys.sort((a, b) => sessions[a].joinedAt - sessions[b].joinedAt)
+        for (let i = 0; i < sessionKeys.length - 10; i++) {
+          delete sessions[sortedKeys[i]]
+        }
+      }
+      
+      localStorage.setItem('rapidPlanningSessions', JSON.stringify(sessions))
+    } catch (e) {
+      console.warn('Failed to save session data:', e)
     }
   }
 
   getSessionData(sessionId) {
-    const sessions = safeStorage.getJSON('rapidPlanningSessions', {})
-    return sessions[sessionId] || null
+    try {
+      const sessions = JSON.parse(localStorage.getItem('rapidPlanningSessions') || '{}')
+      return sessions[sessionId] || null
+    } catch (e) {
+      console.warn('Failed to load session data:', e)
+      return null
+    }
   }
 
   clearSessionData(sessionId) {
-    const sessions = safeStorage.getJSON('rapidPlanningSessions', {})
-    delete sessions[sessionId]
-    safeStorage.setJSON('rapidPlanningSessions', sessions)
-    console.log(`Cleared session data for session ${sessionId}`)
+    try {
+      const sessions = JSON.parse(localStorage.getItem('rapidPlanningSessions') || '{}')
+      delete sessions[sessionId]
+      localStorage.setItem('rapidPlanningSessions', JSON.stringify(sessions))
+      console.log(`Cleared session data for session ${sessionId}`)
+    } catch (e) {
+      console.warn('Failed to clear session data:', e)
+    }
   }
 
   getCurrentGameState() {

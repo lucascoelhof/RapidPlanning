@@ -1,12 +1,9 @@
 // CryptoJS is loaded globally from CDN
 const CryptoJS = window.CryptoJS;
 
-import { EventEmitter } from './utils/event-emitter.js'
-import { safeStorage } from './utils/safe-storage.js'
-
-export class UIManager extends EventEmitter {
+export class UIManager {
   constructor(gameManager = null, connectionManager = null) {
-    super()
+    this.events = {}
     this.currentPage = null
     this.players = []
     this.selectedVote = null
@@ -14,9 +11,9 @@ export class UIManager extends EventEmitter {
     this.votesRevealed = false
     this.gameManager = gameManager
     this.connectionManager = connectionManager
-
+    
     this.reactions = ['👍', '👎', '😄', '😕', '😲', '🤔', '🔥', '❤️']
-
+    
     this.setupConnectionStatusUI()
     this.setupKeyboardNavigation()
   }
@@ -26,19 +23,16 @@ export class UIManager extends EventEmitter {
     this.keyBuffer = ''
     this.keyTimeout = null
     this.keyDelay = 500 // 0.5 second delay to prevent accidental voting
-
-    // Store handler reference for cleanup
-    this.keydownHandler = (e) => {
+    
+    document.addEventListener('keydown', (e) => {
       // Only handle keyboard navigation when on game page
       if (this.currentPage !== 'game') return
-
+      
       // Don't handle keys when user is typing in inputs
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
-
+      
       this.handleKeyboardInput(e)
-    }
-
-    document.addEventListener('keydown', this.keydownHandler)
+    })
   }
 
   handleKeyboardInput(e) {
@@ -325,7 +319,15 @@ export class UIManager extends EventEmitter {
   }
 
   clearStoredData() {
-    safeStorage.clear()
+    try {
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('rapidPlanning')) {
+          localStorage.removeItem(key)
+        }
+      })
+    } catch (e) {
+      console.warn('Could not clear localStorage:', e)
+    }
   }
 
   showHomePage() {
@@ -1365,28 +1367,16 @@ export class UIManager extends EventEmitter {
     return isNaN(num) ? null : num
   }
 
-  cleanup() {
-    // Remove keyboard event listener
-    if (this.keydownHandler) {
-      document.removeEventListener('keydown', this.keydownHandler)
+  on(event, callback) {
+    if (!this.events[event]) {
+      this.events[event] = []
     }
+    this.events[event].push(callback)
+  }
 
-    // Clear any pending keyboard timeout
-    if (this.keyTimeout) {
-      clearTimeout(this.keyTimeout)
-      this.keyTimeout = null
+  emit(event, ...args) {
+    if (this.events[event]) {
+      this.events[event].forEach(callback => callback(...args))
     }
-
-    // Remove click handlers by cleaning up references
-    this.voteClickHandler = null
-    this.reactionClickHandler = null
-
-    // Clean up connection manager listeners
-    if (this.connectionManager) {
-      // Connection manager handlers are managed by the connection manager itself
-    }
-
-    // Destroy event emitter listeners
-    this.destroy()
   }
 }
