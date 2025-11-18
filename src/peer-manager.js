@@ -1,18 +1,30 @@
 // PeerJS is loaded globally from CDN
 const Peer = window.Peer;
 
-export class PeerManager {
+import { EventEmitter } from './utils/event-emitter.js'
+
+export class PeerManager extends EventEmitter {
   constructor() {
+    super()
     this.peer = null
     this.connections = new Map()
-    this.events = {}
     this.sessionId = null
     this.isHost = false
+    this.connectionState = 'disconnected' // disconnected, connecting, connected, disconnecting
+    this.connectionPromise = null // Store pending connection promise
+    this.messageQueue = [] // Queue for messages when offline/poor connection
+    this.maxQueueSize = 100 // Maximum messages to queue
+    this.connectionsPaused = false
   }
 
   async createSession(sessionId) {
-    // Check if already connected
-    if (this.peer && this.peer.open) {
+    // Check if already connecting or connected
+    if (this.connectionState === 'connecting') {
+      console.log('Connection already in progress, waiting for it to complete')
+      return this.connectionPromise
+    }
+
+    if (this.connectionState === 'connected' && this.peer && this.peer.open) {
       console.log('Already connected to peer network, not creating new connection')
       return Promise.resolve()
     }
@@ -20,13 +32,14 @@ export class PeerManager {
     // Clean up any stale peer connection
     if (this.peer && !this.peer.open) {
       console.log('Cleaning up stale peer connection')
-      this.cleanupPeer()
+      await this.cleanupPeer()
     }
 
     this.sessionId = sessionId
     this.isHost = true
+    this.connectionState = 'connecting'
 
-    return new Promise((resolve, reject) => {
+    this.connectionPromise = new Promise((resolve, reject) => {
       console.log('Creating new peer connection for hosting session')
 
       let resolved = false
@@ -44,6 +57,7 @@ export class PeerManager {
 
       this.peer.on('open', (id) => {
         console.log('Host peer connected with ID:', id)
+        this.connectionState = 'connected'
         this.emit('connected', id)
         resolved = true
         resolve()
@@ -71,6 +85,7 @@ export class PeerManager {
       this.peer.on('error', (error) => {
         console.error('Peer error:', error)
         if (!resolved) {
+          this.connectionState = 'disconnected'
           this.cleanupPeer()
           reject(this.createFriendlyError(error))
         }
@@ -78,16 +93,24 @@ export class PeerManager {
 
       setTimeout(() => {
         if (!resolved) {
+          this.connectionState = 'disconnected'
           this.cleanupPeer()
           reject(new Error('Connection timeout - Unable to connect to the peer network. Please check your internet connection and try again.'))
         }
       }, 15000) // Increased timeout to 15 seconds
     })
+
+    return this.connectionPromise
   }
 
   async joinSession(sessionId) {
-    // Check if already connected
-    if (this.peer && this.peer.open) {
+    // Check if already connecting or connected
+    if (this.connectionState === 'connecting') {
+      console.log('Connection already in progress, waiting for it to complete')
+      return this.connectionPromise
+    }
+
+    if (this.connectionState === 'connected' && this.peer && this.peer.open) {
       console.log('Already connected to peer network, not creating new connection')
       return Promise.resolve()
     }
@@ -95,13 +118,14 @@ export class PeerManager {
     // Clean up any stale peer connection
     if (this.peer && !this.peer.open) {
       console.log('Cleaning up stale peer connection')
-      this.cleanupPeer()
+      await this.cleanupPeer()
     }
 
     this.sessionId = sessionId
     this.isHost = false
+    this.connectionState = 'connecting'
 
-    return new Promise((resolve, reject) => {
+    this.connectionPromise = new Promise((resolve, reject) => {
       console.log('Creating new peer connection for joining session')
 
       let peerResolved = false
@@ -130,12 +154,14 @@ export class PeerManager {
         // Check if connection is already open
         if (hostConnection.open) {
           console.log('Connection to host already open')
+          this.connectionState = 'connected'
           this.handleOutgoingConnection(hostConnection)
           hostConnectionResolved = true
           resolve()
         } else {
           hostConnection.on('open', () => {
             console.log('Connected to host')
+            this.connectionState = 'connected'
             this.handleOutgoingConnection(hostConnection)
             hostConnectionResolved = true
             resolve()
@@ -145,6 +171,7 @@ export class PeerManager {
         hostConnection.on('error', (error) => {
           console.error('Connection to host failed:', error)
           if (!hostConnectionResolved) {
+            this.connectionState = 'disconnected'
             this.cleanupPeer()
             reject(new Error('Failed to connect to session - The host may be offline or the session ID is invalid.'))
           }
@@ -153,6 +180,7 @@ export class PeerManager {
         setTimeout(() => {
           if (!hostConnectionResolved) {
             console.error('Connection timeout - host connection did not open')
+            this.connectionState = 'disconnected'
             this.cleanupPeer()
             reject(new Error('Connection timeout - Unable to reach the session host. The host may be offline or the session may not exist.'))
           }
@@ -181,6 +209,7 @@ export class PeerManager {
       this.peer.on('error', (error) => {
         console.error('Peer error:', error)
         if (!peerResolved) {
+          this.connectionState = 'disconnected'
           this.cleanupPeer()
           reject(this.createFriendlyError(error))
         }
@@ -189,11 +218,14 @@ export class PeerManager {
       // Timeout for initial peer creation
       setTimeout(() => {
         if (!peerResolved) {
+          this.connectionState = 'disconnected'
           this.cleanupPeer()
           reject(new Error('Connection timeout - Unable to connect to the peer network. Please check your internet connection and try again.'))
         }
       }, 15000)
     })
+
+    return this.connectionPromise
   }
 
   setupConnectionHandlers(conn) {
@@ -282,26 +314,87 @@ export class PeerManager {
   }
 
   broadcast(data) {
+    // If connections are paused, queue the message
+    if (this.connectionsPaused || this.connectionState !== 'connected') {
+      this.queueMessage({ type: 'broadcast', data })
+      return
+    }
+
+    let sentSuccessfully = false
     this.connections.forEach((conn, peerId) => {
       if (conn.open) {
         try {
           conn.send(data)
+          sentSuccessfully = true
         } catch (error) {
           console.error('Failed to send data to', peerId, ':', error)
         }
       }
     })
+
+    // If no messages were sent successfully, queue it
+    if (!sentSuccessfully && this.connections.size > 0) {
+      this.queueMessage({ type: 'broadcast', data })
+    }
   }
 
   send(peerId, data) {
+    // If connections are paused, queue the message
+    if (this.connectionsPaused || this.connectionState !== 'connected') {
+      this.queueMessage({ type: 'send', peerId, data })
+      return
+    }
+
     const conn = this.connections.get(peerId)
     if (conn && conn.open) {
       try {
         conn.send(data)
       } catch (error) {
         console.error('Failed to send data to', peerId, ':', error)
+        // Queue the message for retry
+        this.queueMessage({ type: 'send', peerId, data })
       }
+    } else {
+      // Connection not available, queue the message
+      this.queueMessage({ type: 'send', peerId, data })
     }
+  }
+
+  queueMessage(message) {
+    // Add to queue if not full
+    if (this.messageQueue.length < this.maxQueueSize) {
+      this.messageQueue.push({
+        ...message,
+        timestamp: Date.now()
+      })
+      console.log(`Message queued (${this.messageQueue.length}/${this.maxQueueSize})`)
+    } else {
+      console.warn('Message queue full, dropping oldest message')
+      // Remove oldest message and add new one
+      this.messageQueue.shift()
+      this.messageQueue.push({
+        ...message,
+        timestamp: Date.now()
+      })
+    }
+  }
+
+  flushMessageQueue() {
+    if (this.messageQueue.length === 0) return
+
+    console.log(`Flushing ${this.messageQueue.length} queued messages`)
+
+    // Process all queued messages
+    const messages = [...this.messageQueue]
+    this.messageQueue = []
+
+    messages.forEach(message => {
+      if (message.type === 'broadcast') {
+        this.broadcast(message.data)
+      } else if (message.type === 'send') {
+        this.send(message.peerId, message.data)
+      }
+    })
   }
 
   pauseConnections() {
@@ -314,9 +407,14 @@ export class PeerManager {
   resumeConnections() {
     console.log('Resuming peer connections')
     this.connectionsPaused = false
+
+    // Flush any queued messages
+    this.flushMessageQueue()
   }
 
   disconnect() {
+    this.connectionState = 'disconnecting'
+
     this.connections.forEach((conn) => {
       conn.close()
     })
@@ -326,9 +424,18 @@ export class PeerManager {
       this.peer.destroy()
       this.peer = null
     }
+
+    // Clear message queue on disconnect
+    this.messageQueue = []
+    this.connectionsPaused = false
+
+    this.connectionState = 'disconnected'
+    this.connectionPromise = null
   }
 
   cleanupPeer() {
+    this.connectionState = 'disconnecting'
+
     // Clean up connections without destroying peer
     this.connections.forEach((conn) => {
       try {
@@ -348,6 +455,9 @@ export class PeerManager {
       }
       this.peer = null
     }
+
+    this.connectionState = 'disconnected'
+    this.connectionPromise = null
   }
 
   createFriendlyError(error) {
@@ -378,16 +488,10 @@ export class PeerManager {
     return new Error(`Connection failed: ${message}. Please try refreshing the page or creating a new session.`)
   }
 
-  on(event, callback) {
-    if (!this.events[event]) {
-      this.events[event] = []
-    }
-    this.events[event].push(callback)
-  }
-
-  emit(event, ...args) {
-    if (this.events[event]) {
-      this.events[event].forEach(callback => callback(...args))
-    }
+  cleanup() {
+    // Disconnect all peer connections
+    this.disconnect()
+    // Clean up event emitter listeners
+    this.destroy()
   }
 }

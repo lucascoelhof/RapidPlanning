@@ -1,10 +1,39 @@
 // Error Handler for global error management and user-friendly error boundaries
+import { safeStorage } from '../utils/safe-storage.js'
+
 export class ErrorHandler {
   constructor(uiManager = null) {
     this.uiManager = uiManager
     this.errorLog = []
     this.maxErrorLogSize = 50
+    this.autoRefreshAttempts = 0
+    this.maxAutoRefreshAttempts = 2
+    this.lastAutoRefreshTime = 0
+    this.autoRefreshCooldown = 60000 // 1 minute cooldown
     this.setupGlobalErrorHandling()
+    this.loadAutoRefreshState()
+  }
+
+  loadAutoRefreshState() {
+    const state = safeStorage.getJSON('rapidPlanning_autoRefreshState', null)
+    if (state) {
+      this.autoRefreshAttempts = state.attempts || 0
+      this.lastAutoRefreshTime = state.lastTime || 0
+
+      // Reset if cooldown period has passed
+      const timeSinceLastRefresh = Date.now() - this.lastAutoRefreshTime
+      if (timeSinceLastRefresh > this.autoRefreshCooldown) {
+        this.autoRefreshAttempts = 0
+        this.saveAutoRefreshState()
+      }
+    }
+  }
+
+  saveAutoRefreshState() {
+    safeStorage.setJSON('rapidPlanning_autoRefreshState', {
+      attempts: this.autoRefreshAttempts,
+      lastTime: this.lastAutoRefreshTime
+    })
   }
 
   setupGlobalErrorHandling() {
@@ -55,19 +84,15 @@ export class ErrorHandler {
   logError(errorInfo) {
     // Add to in-memory log
     this.errorLog.unshift(errorInfo)
-    
+
     // Keep only the most recent errors
     if (this.errorLog.length > this.maxErrorLogSize) {
       this.errorLog = this.errorLog.slice(0, this.maxErrorLogSize)
     }
 
-    // Store recent errors in localStorage for debugging
-    try {
-      const recentErrors = this.errorLog.slice(0, 10) // Keep only 10 most recent
-      localStorage.setItem('rapidPlanning_errorLog', JSON.stringify(recentErrors))
-    } catch (e) {
-      // If localStorage is full or unavailable, ignore
-    }
+    // Store recent errors for debugging
+    const recentErrors = this.errorLog.slice(0, 10) // Keep only 10 most recent
+    safeStorage.setJSON('rapidPlanning_errorLog', recentErrors)
   }
 
   getUserFriendlyMessage(error, context) {
@@ -157,7 +182,7 @@ export class ErrorHandler {
       case 'retry':
         // Could implement automatic retry logic here
         break
-        
+
       case 'refresh':
         // Show option to refresh or do it automatically after a delay
         setTimeout(() => {
@@ -166,14 +191,33 @@ export class ErrorHandler {
           }
         }, 2000)
         break
-        
+
       case 'auto_refresh':
+        // Check if we've exceeded auto-refresh limits
+        if (this.autoRefreshAttempts >= this.maxAutoRefreshAttempts) {
+          console.warn('Auto-refresh limit reached, preventing infinite loop')
+          // Show manual refresh option instead
+          if (this.uiManager) {
+            this.uiManager.showErrorModal({
+              title: 'Persistent Error Detected',
+              message: 'The application has encountered repeated errors. Please try clearing your browser cache or contact support if the problem persists.',
+              action: 'dismiss'
+            })
+          }
+          break
+        }
+
+        // Track this refresh attempt
+        this.autoRefreshAttempts++
+        this.lastAutoRefreshTime = Date.now()
+        this.saveAutoRefreshState()
+
         // Automatic refresh for critical errors
         setTimeout(() => {
           window.location.reload()
         }, 3000)
         break
-        
+
       case 'clear_data':
         // Show option to clear local storage
         setTimeout(() => {
@@ -183,7 +227,7 @@ export class ErrorHandler {
           }
         }, 2000)
         break
-        
+
       case 'dismiss':
       case 'none':
       default:
@@ -193,16 +237,8 @@ export class ErrorHandler {
   }
 
   clearStoredData() {
-    try {
-      // Clear RapidPlanning related data
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('rapidPlanning')) {
-          localStorage.removeItem(key)
-        }
-      })
-    } catch (e) {
-      console.warn('Could not clear localStorage:', e)
-    }
+    // Use safeStorage cleanup method
+    safeStorage.clear()
   }
 
   // Wrapper for handling async operations safely
@@ -254,10 +290,6 @@ export class ErrorHandler {
   // Clear error log
   clearErrorLog() {
     this.errorLog = []
-    try {
-      localStorage.removeItem('rapidPlanning_errorLog')
-    } catch (e) {
-      // Ignore
-    }
+    safeStorage.removeItem('rapidPlanning_errorLog')
   }
 }

@@ -1,12 +1,15 @@
-export class Router {
+import { EventEmitter } from './utils/event-emitter.js'
+
+export class Router extends EventEmitter {
   constructor() {
-    this.events = {}
+    super()
     this.currentRoute = null
+    this.popstateHandler = () => this.handleRouteChange()
   }
 
   init() {
     this.handleRouteChange()
-    window.addEventListener('popstate', () => this.handleRouteChange())
+    window.addEventListener('popstate', this.popstateHandler)
   }
 
   handleRouteChange() {
@@ -48,16 +51,8 @@ export class Router {
     }
   }
 
-  on(event, callback) {
-    if (!this.events[event]) {
-      this.events[event] = []
-    }
-    this.events[event].push(callback)
-  }
-
-  emit(event, ...args) {
-    if (this.events[event]) {
-      this.events[event].forEach(callback => callback(...args))
-    }
+  cleanup() {
+    window.removeEventListener('popstate', this.popstateHandler)
+    this.destroy() // Clean up event listeners from EventEmitter
   }
 }
