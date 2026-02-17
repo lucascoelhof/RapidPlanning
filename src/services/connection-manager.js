@@ -83,27 +83,29 @@ export class ConnectionManager {
 
   checkConnectionHealth() {
     if (!this.isOnline) return
-    
-    // Simple connection test using a small image request
+
+    // Test connection by fetching a small resource from a CDN
+    // This actually tests network connectivity, not just data URI parsing
     const startTime = Date.now()
-    const img = new Image()
-    
-    const timeout = setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       this.handleConnectionTest(false, Date.now() - startTime)
     }, 5000) // 5 second timeout
-    
-    img.onload = () => {
-      clearTimeout(timeout)
-      this.handleConnectionTest(true, Date.now() - startTime)
-    }
-    
-    img.onerror = () => {
-      clearTimeout(timeout)
-      this.handleConnectionTest(false, Date.now() - startTime)
-    }
-    
-    // Use a small, fast-loading image (1x1 pixel)
-    img.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
+    // Try to fetch a small resource from a reliable CDN
+    fetch('https://www.gstatic.com/generate_204', {
+      method: 'HEAD',
+      cache: 'no-cache',
+      mode: 'no-cors'
+    })
+      .then(() => {
+        clearTimeout(timeoutId)
+        this.handleConnectionTest(true, Date.now() - startTime)
+      })
+      .catch((error) => {
+        clearTimeout(timeoutId)
+        console.warn('Connection health check failed:', error)
+        this.handleConnectionTest(false, Date.now() - startTime)
+      })
   }
 
   handleConnectionTest(success, responseTime) {

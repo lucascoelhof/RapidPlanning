@@ -107,6 +107,17 @@ export class RapidPlanningApp {
       this.gameManager.handlePeerMessage(peerId, data)
     })
 
+    // Reconnection events
+    this.peerManager.on('reconnected', (peerId) => {
+      console.log('Successfully reconnected to peer:', peerId)
+      this.uiManager.showConnectionMessage('Reconnected to session', 'success')
+    })
+
+    this.peerManager.on('reconnectionFailed', (peerId) => {
+      console.warn('Failed to reconnect to peer:', peerId)
+      this.uiManager.showConnectionMessage('Failed to reconnect to session. You may need to refresh.', 'warning')
+    })
+
     // UI events
     this.uiManager.on('createSession', (playerData) => {
       this.createSession(playerData)
