@@ -13,9 +13,10 @@ export class UIManager {
     this.connectionManager = connectionManager
     
     this.reactions = ['👍', '👎', '😄', '😕', '😲', '🤔', '🔥', '❤️']
-    
+
     this.setupConnectionStatusUI()
     this.setupKeyboardNavigation()
+    this.loadTheme()
   }
 
   setupKeyboardNavigation() {
@@ -27,10 +28,13 @@ export class UIManager {
     document.addEventListener('keydown', (e) => {
       // Only handle keyboard navigation when on game page
       if (this.currentPage !== 'game') return
-      
+
       // Don't handle keys when user is typing in inputs
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
-      
+
+      // Don't handle keys when a modal/dialog is open
+      if (document.querySelector('.settings-backdrop') || document.querySelector('.shortcuts-modal-backdrop')) return
+
       this.handleKeyboardInput(e)
     })
   }
@@ -330,6 +334,154 @@ export class UIManager {
     }
   }
 
+  // Theme management
+  loadTheme() {
+    const saved = localStorage.getItem('rapidPlanningTheme')
+    this.currentTheme = saved || 'dark'
+    document.documentElement.setAttribute('data-theme', this.currentTheme)
+  }
+
+  setTheme(theme) {
+    this.currentTheme = theme
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('rapidPlanningTheme', theme)
+  }
+
+  // Settings dialog
+  showSettingsDialog() {
+    // Remove existing dialog if any
+    const existing = document.querySelector('.settings-backdrop')
+    if (existing) existing.remove()
+
+    const backdrop = document.createElement('div')
+    backdrop.className = 'settings-backdrop'
+    backdrop.innerHTML = `
+      <div class="settings-dialog">
+        <div class="settings-header">
+          <h3>Settings</h3>
+          <button class="settings-close-btn" id="settings-close">&times;</button>
+        </div>
+        <div class="settings-body">
+          <div class="settings-section">
+            <div class="settings-section-title">Appearance</div>
+            <div class="settings-row">
+              <span class="settings-row-label">Theme</span>
+              <div class="theme-toggle">
+                <button class="theme-option ${this.currentTheme === 'light' ? 'active' : ''}" data-theme="light">Light</button>
+                <button class="theme-option ${this.currentTheme === 'dark' ? 'active' : ''}" data-theme="dark">Dark</button>
+              </div>
+            </div>
+          </div>
+          <div class="settings-section">
+            <div class="settings-section-title">Help</div>
+            <button class="settings-shortcuts-btn" id="settings-show-shortcuts">
+              <span>Keyboard Shortcuts</span>
+              <span class="arrow">&#8250;</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    `
+
+    document.body.appendChild(backdrop)
+
+    // Close on backdrop click
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) backdrop.remove()
+    })
+
+    // Close button
+    backdrop.querySelector('#settings-close').addEventListener('click', () => {
+      backdrop.remove()
+    })
+
+    // Theme toggle
+    backdrop.querySelectorAll('.theme-option').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const theme = btn.dataset.theme
+        this.setTheme(theme)
+        backdrop.querySelectorAll('.theme-option').forEach(b => b.classList.remove('active'))
+        btn.classList.add('active')
+      })
+    })
+
+    // Keyboard shortcuts button
+    backdrop.querySelector('#settings-show-shortcuts').addEventListener('click', () => {
+      this.showKeyboardShortcutsModal()
+    })
+
+    // Close on Escape
+    const escHandler = (e) => {
+      if (e.key === 'Escape' && document.body.contains(backdrop)) {
+        backdrop.remove()
+        document.removeEventListener('keydown', escHandler)
+      }
+    }
+    document.addEventListener('keydown', escHandler)
+  }
+
+  showKeyboardShortcutsModal() {
+    // Remove existing modal if any
+    const existing = document.querySelector('.shortcuts-modal-backdrop')
+    if (existing) existing.remove()
+
+    const backdrop = document.createElement('div')
+    backdrop.className = 'shortcuts-modal-backdrop'
+    backdrop.innerHTML = `
+      <div class="shortcuts-modal">
+        <div class="shortcuts-modal-header">
+          <h3>Keyboard Shortcuts</h3>
+          <button class="shortcuts-modal-close" id="shortcuts-close">&times;</button>
+        </div>
+        <div class="shortcuts-modal-body">
+          <div class="shortcuts-grid">
+            <div class="shortcut-item">
+              <kbd>0-9, ½, ?</kbd>
+              <span>Vote (0.5s delay)</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>+ / =</kbd>
+              <span>Next vote option</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>- / _</kbd>
+              <span>Previous vote option</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Enter</kbd>
+              <span>Show votes</span>
+            </div>
+            <div class="shortcut-item">
+              <kbd>Esc</kbd>
+              <span>Clear votes</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `
+
+    document.body.appendChild(backdrop)
+
+    // Close on backdrop click
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) backdrop.remove()
+    })
+
+    // Close button
+    backdrop.querySelector('#shortcuts-close').addEventListener('click', () => {
+      backdrop.remove()
+    })
+
+    // Close on Escape
+    const escHandler = (e) => {
+      if (e.key === 'Escape' && document.body.contains(backdrop)) {
+        backdrop.remove()
+        document.removeEventListener('keydown', escHandler)
+      }
+    }
+    document.addEventListener('keydown', escHandler)
+  }
+
   showHomePage() {
     this.currentPage = 'home'
     this.ensureAppContainer()
@@ -375,7 +527,7 @@ export class UIManager {
           <div class="home-actions">
             <div class="card" style="max-width: 400px; margin: 0 auto;">
               <h2>Join Session ${sessionId}</h2>
-              <p style="color: #666; margin-bottom: 1.5rem;">
+              <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
                 Enter your name to join this planning session
               </p>
               <form id="join-prompt-form">
@@ -385,7 +537,7 @@ export class UIManager {
                   </label>
                   <input type="text" id="join-prompt-identity" required maxlength="70" 
                          placeholder="John Doe or john@example.com" autofocus>
-                  <small style="color: #666; font-size: 0.85em; margin-top: 0.25rem; display: block;">
+                  <small style="color: var(--text-muted); font-size: 0.85em; margin-top: 0.25rem; display: block;">
                     Enter your name or email address (for Gravatar)
                   </small>
                 </div>
@@ -426,7 +578,7 @@ export class UIManager {
                   </label>
                   <input type="text" id="create-identity" required maxlength="70" 
                          placeholder="John Doe or john@example.com">
-                  <small style="color: #666; font-size: 0.85em; margin-top: 0.25rem; display: block;">
+                  <small style="color: var(--text-muted); font-size: 0.85em; margin-top: 0.25rem; display: block;">
                     Enter your name or email address (for Gravatar)
                   </small>
                 </div>
@@ -451,7 +603,7 @@ export class UIManager {
                   </label>
                   <input type="text" id="join-identity" required maxlength="70" 
                          placeholder="Jane Doe or jane@example.com">
-                  <small style="color: #666; font-size: 0.85em; margin-top: 0.25rem; display: block;">
+                  <small style="color: var(--text-muted); font-size: 0.85em; margin-top: 0.25rem; display: block;">
                     Enter your name or email address (for Gravatar)
                   </small>
                 </div>
@@ -485,6 +637,10 @@ export class UIManager {
             <h2>⚡ RapidPlanning ⚡</h2>
             <div class="session-id">Session: ${sessionId}</div>
           </div>
+          <button class="settings-btn" id="header-settings-btn">
+            <span class="settings-icon">&#9881;</span>
+            <span>Settings</span>
+          </button>
         </div>
         
         <div class="game-content">
@@ -549,31 +705,6 @@ export class UIManager {
               </div>
             </div>
             
-            <div class="keyboard-shortcuts-section">
-              <h3>Keyboard Shortcuts</h3>
-              <div class="shortcuts-grid">
-                <div class="shortcut-item">
-                  <kbd>0-9, ½, ?</kbd>
-                  <span>Vote (0.5s delay)</span>
-                </div>
-                <div class="shortcut-item">
-                  <kbd>+ / =</kbd>
-                  <span>Next vote option</span>
-                </div>
-                <div class="shortcut-item">
-                  <kbd>- / _</kbd>
-                  <span>Previous vote option</span>
-                </div>
-                <div class="shortcut-item">
-                  <kbd>Enter</kbd>
-                  <span>Show votes</span>
-                </div>
-                <div class="shortcut-item">
-                  <kbd>Esc</kbd>
-                  <span>Clear votes</span>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
         
@@ -743,13 +874,19 @@ export class UIManager {
     this.renderVoteCards()
     this.renderReactionButtons()
     this.bindVotingStatsEvents()
-    
+
     // Initially hide the stats content
     const statsContent = document.querySelector('.stats-content')
     if (statsContent) {
       statsContent.style.display = 'none'
     }
-    
+
+    // Settings button
+    const settingsBtn = document.getElementById('header-settings-btn')
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', () => this.showSettingsDialog())
+    }
+
     // Bind footer link events
     const gameTermsLink = document.getElementById('game-terms-link')
     if (gameTermsLink) {
