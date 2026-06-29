@@ -1,0 +1,174 @@
+/**
+ * Supplementary styles for components introduced by the rewrite.
+ * The bulk of the styling (theme variables, layout, vote cards, players
+ * table, modals, settings dialog, etc.) lives in `style.css` and is reused
+ * unchanged because the rewrite kept the same class names.
+ *
+ * This file only covers:
+ *   - the toast host + toasts
+ *   - the connecting-indicator (formerly inline-styled)
+ *   - the connection-error modal (formerly inline-styled)
+ *   - the `.form-hint` helper (formerly inline `style=` attributes)
+ *   - the `.local` player-row marker
+ *   - minor button variants used by the new connection-error modal
+ */
+
+/* --- Form hints (replaces inline `<small style="...">`) ------------------ */
+.form-hint {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  margin-top: 0.25rem;
+  display: block;
+}
+
+/* --- Local player row marker -------------------------------------------- */
+.player-row.local .player-name {
+  font-weight: 700;
+}
+
+/* --- Toast host --------------------------------------------------------- */
+.toast-host {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+  max-width: 90vw;
+}
+
+.toast {
+  background: var(--modal-bg, rgba(26, 26, 46, 0.95));
+  color: var(--text-primary, #e2e8f0);
+  border: 1px solid var(--border-primary);
+  border-radius: 10px;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.95rem;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 8px 24px var(--shadow-primary);
+  animation: toastIn 0.25s ease;
+  pointer-events: auto;
+}
+
+.toast-success { border-left: 4px solid #22c55e; }
+.toast-warning { border-left: 4px solid #f59e0b; }
+.toast-error   { border-left: 4px solid #ef4444; }
+.toast-info    { border-left: 4px solid #3b82f6; }
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* --- Connecting indicator (replaces legacy inline styles) --------------- */
+.connecting-indicator {
+  position: fixed;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  background: var(--connecting-bg, rgba(59, 130, 246, 0.95));
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.connecting-spinner {
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Connection error modal (replaces legacy inline styles) ------------- */
+.connection-error-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-backdrop, rgba(0, 0, 0, 0.75));
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.connection-error-card {
+  background: var(--connection-error-card-bg, #1e293b);
+  color: var(--text-primary, #e2e8f0);
+  padding: 2rem;
+  border-radius: 14px;
+  max-width: 500px;
+  width: 100%;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+  text-align: center;
+  animation: cardIn 0.25s ease;
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.connection-error-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.connection-error-title {
+  font-size: 1.5rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-primary, #e2e8f0);
+}
+
+.connection-error-message {
+  font-size: 1rem;
+  margin-bottom: 1.5rem;
+  color: var(--text-muted, #94a3b8);
+  line-height: 1.5;
+}
+
+.connection-error-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.connection-error-actions .btn {
+  width: 100%;
+}
+
+.connection-error-actions .btn-primary {
+  background: #3b82f6;
+  color: white;
+}
+
+.connection-error-actions .btn-secondary {
+  background: #6366f1;
+  color: white;
+}
+
+.connection-error-actions .btn-ghost {
+  background: transparent;
+  color: var(--text-muted, #94a3b8);
+  border: 2px solid var(--text-muted, #94a3b8);
+}
+
+/* --- Reduced motion ----------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .connecting-spinner,
+  .toast,
+  .connection-error-card {
+    animation: none;
+  }
+}
