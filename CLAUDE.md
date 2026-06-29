@@ -130,7 +130,7 @@ Full mesh (matches v1). The host registers `host-{sessionId}`; each newcomer rec
 
 - **GitHub Pages base path:** `vite.config.ts` sets `base: '/RapidPlanning/'`. The dev server ignores `base`, so local dev is unaffected.
 - **Routing is query-param based** because GitHub Pages serves a single static `index.html` — paths like `/about` would 404. Use `?page=about` and `?session=123456789`.
-- The deploy workflow (`.github/workflows/deploy.yml`) runs the full gate (typecheck + lint + test + build) before publishing.
+- The deploy workflow (`.github/workflows/deploy.yml`) runs the full gate (typecheck + lint + test + build) before publishing to the `gh-pages` branch. It triggers on push to `master` (the repo's default branch). GitHub Pages must be configured to serve from the `gh-pages` branch, **not** the `master` root — otherwise the raw unbuilt source is served and asset paths 404.
 
 ## Legacy Reference
 
