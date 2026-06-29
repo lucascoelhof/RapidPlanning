@@ -1,0 +1,15 @@
+<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="clubsGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#667eea"/>
+      <stop offset="100%" stop-color="#764ba2"/>
+    </linearGradient>
+  </defs>
+  <path d="M12 2C12 2 8 4 8 8C8 10 9.5 11.5 11.5 11.8C11.2 12.2 11 12.7 11 13.2C11 14.8 12.2 16 13.8 16H10.2C8.6 16 7.4 17.2 7.4 18.8V19.5C7.4 20.3 8 21 8.8 21H15.2C16 21 16.6 20.3 16.6 19.5V18.8C16.6 17.2 15.4 16 13.8 16H10.2C12.2 16 13.8 14.4 13.8 12.4V11.8C15.5 11.5 16.8 10 16.8 8.2C16.8 4.2 12.8 2.2 12.8 2.2L12 2Z" 
+        fill="url(#clubsGradient)" 
+        stroke="url(#clubsGradient)" 
+        stroke-width="0.5"/>
+  <circle cx="7" cy="8" r="3" fill="url(#clubsGradient)"/>
+  <circle cx="17" cy="8" r="3" fill="url(#clubsGradient)"/>
+  <circle cx="12" cy="5" r="3" fill="url(#clubsGradient)"/>
+</svg>
