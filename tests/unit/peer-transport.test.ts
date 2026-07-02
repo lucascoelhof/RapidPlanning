@@ -423,3 +423,69 @@ describe('PeerTransport — disconnect + teardown', () => {
     expect(errors[1]!.message).toMatch(/network error/i);
   });
 });
+
+describe('PeerTransport — mesh dial retry', () => {
+  it('retries a dial that never opens, then gives up after max attempts', async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const host = new PeerTransport();
+      const hostP = host.createSession('121212121');
+      Mock.FakePeer.created[0]!._open();
+      await hostP;
+
+      const client = new PeerTransport();
+      const clientP = client.joinSession('121212121');
+      const clientPeer = Mock.FakePeer.created.at(-1)!;
+      clientPeer._open();
+      await clientP;
+      await flush();
+
+      const connectSpy = vi.spyOn(clientPeer, 'connect');
+      const pending = client['pendingDials' as never] as unknown as Set<string>;
+
+      // Host hands the client a peer that doesn't exist on the network.
+      (client as unknown as { dialPeers: (ids: string[]) => void }).dialPeers([
+        'ghost-peer',
+      ]);
+      expect(pending.has('ghost-peer')).toBe(true);
+
+      // Run the full retry chain to exhaustion (orphan timeouts + backoffs).
+      await vi.advanceTimersByTimeAsync(50_000);
+
+      // meshDialMaxAttempts dials, then give up and clear the pending slot.
+      expect(connectSpy).toHaveBeenCalledTimes(TIMING.meshDialMaxAttempts);
+      expect(pending.has('ghost-peer')).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/gave up dialing ghost-peer/),
+      );
+    } finally {
+      warnSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears pending dials on disconnect so retries never fire after teardown', async () => {
+    const host = new PeerTransport();
+    const hostP = host.createSession('131313131');
+    Mock.FakePeer.created[0]!._open();
+    await hostP;
+
+    const client = new PeerTransport();
+    const clientP = client.joinSession('131313131');
+    Mock.FakePeer.created.at(-1)!._open();
+    await clientP;
+    await flush();
+
+    const pending = client['pendingDials' as never] as unknown as Set<string>;
+    (client as unknown as { dialPeers: (ids: string[]) => void }).dialPeers([
+      'ghost-peer',
+    ]);
+    expect(pending.has('ghost-peer')).toBe(true);
+
+    client.disconnect();
+
+    expect(pending.has('ghost-peer')).toBe(false);
+    expect(client.peer).toBeNull();
+  });
+});

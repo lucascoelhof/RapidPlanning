@@ -53,6 +53,8 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
   isHost = false;
   /** Set while we're mid-reconnect attempt so `close` doesn't double-fire. */
   private reconnecting = false;
+  /** Peers we have an in-flight dial against — prevents duplicate attempts. */
+  private pendingDials = new Set<string>();
 
   // --- Session lifecycle ----------------------------------------------------
 
@@ -251,18 +253,84 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
     }
   }
 
-  /** Client: dial every peer the host told us about, skipping existing ones. */
+  /**
+   * Client: dial every peer the host told us about. Dials are staggered so the
+   * ICE negotiation for many peers doesn't all hit at once, and any dial that
+   * fails (or silently never opens) is retried with exponential backoff. The
+   * previous implementation fired every dial in a tight loop and just logged +
+   * gave up on failure — in larger meshes that left pairs permanently
+   * disconnected for the session.
+   */
   private dialPeers(peerIds: string[]): void {
-    for (const id of peerIds) {
-      if (this.connections.has(id) || id === this.peer?.id) continue;
-      const conn = this.peer?.connect(id, { reliable: true });
-      if (!conn) continue;
-      this.attachConnectionHandlers(conn);
-      conn.on('open', () => this.registerConnection(conn));
-      conn.on('error', (err) =>
-        console.warn(`[transport] mesh dial to ${id} failed:`, err),
-      );
+    const targets = peerIds.filter(
+      (id) => id !== this.peer?.id && !this.connections.has(id) && !this.pendingDials.has(id),
+    );
+    targets.forEach((id, i) => {
+      this.pendingDials.add(id);
+      // Stagger initial dials so ICE doesn't pile up for large meshes.
+      setTimeout(() => this.dialWithRetry(id, 0), i * TIMING.meshDialStagger);
+    });
+  }
+
+  /** Dial a single peer, retrying with exponential backoff on failure. */
+  private dialWithRetry(peerId: string, attempt: number): void {
+    // Bail if we connected via another path, tore down, or exhausted retries.
+    if (!this.peer?.open || this.connections.has(peerId)) {
+      this.pendingDials.delete(peerId);
+      return;
     }
+    if (attempt >= TIMING.meshDialMaxAttempts) {
+      this.pendingDials.delete(peerId);
+      console.warn(`[transport] gave up dialing ${peerId} after ${attempt} attempts`);
+      return;
+    }
+
+    const conn = this.peer.connect(peerId, { reliable: true });
+    if (!conn) {
+      this.scheduleRedial(peerId, attempt);
+      return;
+    }
+    this.attachConnectionHandlers(conn);
+
+    // PeerJS occasionally fires neither 'open' nor 'error' — guard against the
+    // dial orphaning forever by treating a silent stall as a failure.
+    const orphan = setTimeout(() => {
+      if (this.connections.has(peerId)) return;
+      try {
+        conn.close();
+      } catch {
+        // ignore
+      }
+      this.scheduleRedial(peerId, attempt);
+    }, TIMING.meshDialTimeout);
+
+    conn.on('open', () => {
+      clearTimeout(orphan);
+      this.pendingDials.delete(peerId);
+      this.registerConnection(conn);
+    });
+    conn.on('error', (err: PeerErrorLike) => {
+      clearTimeout(orphan);
+      console.warn(
+        `[transport] mesh dial to ${peerId} (attempt ${attempt + 1}) failed:`,
+        err,
+      );
+      this.scheduleRedial(peerId, attempt);
+    });
+  }
+
+  /** Schedule the next retry, respecting backoff + teardown. */
+  private scheduleRedial(peerId: string, attempt: number): void {
+    if (!this.peer?.open) {
+      this.pendingDials.delete(peerId);
+      return;
+    }
+    // Keep peerId in `pendingDials` during the backoff wait so a concurrent
+    // `dialPeers` call can't start a duplicate dial.
+    setTimeout(
+      () => this.dialWithRetry(peerId, attempt + 1),
+      TIMING.meshDialRetryBaseDelay * Math.pow(2, attempt),
+    );
   }
 
   // --- Keepalive + health ---------------------------------------------------
@@ -408,6 +476,7 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
     }
     this.connections.clear();
     this.health.clear();
+    this.pendingDials.clear();
     this.cleanupPeer();
   }
 

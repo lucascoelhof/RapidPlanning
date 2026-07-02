@@ -41,6 +41,15 @@ export const TIMING = {
   revealDelay: 500,
   keyboardBufferMs: 500,
   rejoinRetryBaseDelay: 1_000,
+  /**
+   * Mesh dial (client dials peers from the host's `peer_list`). A newcomer
+   * dials every listed peer; without staggering + retry, a single transient
+   * dial failure left that pair disconnected for the whole session.
+   */
+  meshDialStagger: 60,
+  meshDialRetryBaseDelay: 1_000,
+  meshDialMaxAttempts: 3,
+  meshDialTimeout: 10_000,
 } as const;
 
 /** STUN servers for WebRTC ICE negotiation. */
