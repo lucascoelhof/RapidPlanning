@@ -46,6 +46,13 @@ export class GameStore extends Emitter<StoreEvents> {
   private selectedReaction: Reaction | null = null;
   private reactionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /**
+   * Votes that arrived from a peer before their `player_data` did. Held until
+   * the player is upserted, then applied — without this a vote landing first
+   * was silently dropped (ordering between two independent messages isn't
+   * guaranteed), which could leave the live vote count wrong mid-session.
+   */
+  private pendingVotes = new Map<string, VoteValue | null>();
+  /**
    * Handle for the deferred auto-reveal from `checkVotingComplete`. Tracked so
    * `reset()` / vote changes can cancel a pending reveal instead of leaving a
    * stray timer that fires after teardown.
@@ -124,20 +131,26 @@ export class GameStore extends Emitter<StoreEvents> {
   }): void {
     if (peerId === this.localPeerId) return; // never trust wire data about self
     const existing = this.players.get(peerId);
+    // Apply any vote that arrived ahead of this player_data.
+    const heldVote = this.pendingVotes.has(peerId) ? this.pendingVotes.get(peerId) : existing?.vote;
+    if (this.pendingVotes.has(peerId)) this.pendingVotes.delete(peerId);
     this.players.set(peerId, {
       id: peerId,
       name: data.name,
       email: data.email,
       avatar: data.avatar,
-      vote: existing?.vote ?? null,
+      vote: heldVote ?? null,
       reaction: existing?.reaction ?? null,
       isLocal: false,
     });
     this.emitChange();
+    // A held vote now belongs to a known player — it counts toward completion.
+    if (existing === undefined) this.checkVotingComplete();
   }
 
   removePlayer(peerId: string): void {
     this.clearReactionTimer(peerId);
+    this.pendingVotes.delete(peerId);
     if (!this.players.delete(peerId)) return;
     this.emitChange();
     this.checkVotingComplete();
@@ -160,7 +173,11 @@ export class GameStore extends Emitter<StoreEvents> {
 
   setRemoteVote(peerId: string, vote: VoteValue | null): void {
     const p = this.players.get(peerId);
-    if (!p) return;
+    if (!p) {
+      // Player unknown yet — hold the vote until their player_data arrives.
+      this.pendingVotes.set(peerId, vote);
+      return;
+    }
     p.vote = vote;
     this.players.set(peerId, p);
     this.emitChange();
@@ -355,6 +372,7 @@ export class GameStore extends Emitter<StoreEvents> {
       this.revealTimer = null;
     }
     this.players.clear();
+    this.pendingVotes.clear();
     this.sessionId = null;
     this._localPeerId = null;
     this.votesRevealed = false;

@@ -1,6 +1,7 @@
 import { render } from 'lit-html';
 import type { Session } from '../app/session';
 import type { Route } from '../router';
+import type { StoreSnapshot } from '../game/store';
 import { theme } from './theme';
 import { KeyboardController } from './keyboard';
 import { homePageView } from './pages/home';
@@ -33,6 +34,12 @@ export class UIController {
   private keyboard: KeyboardController;
   /** Whether the connecting spinner is currently shown. */
   private connecting = false;
+  /** Guard against double-init (HMR, re-mount) doubling subscriptions. */
+  private initialized = false;
+  /** Unsubscribe handles for every subscription made in `init()`. */
+  private readonly unsubs: Array<() => void> = [];
+  /** Coalesces bursts of store changes into one render per animation frame. */
+  private renderScheduled = false;
 
   constructor(private readonly session: Session) {
     // Keyboard handlers delegate to session intents.
@@ -45,30 +52,68 @@ export class UIController {
   }
 
   init(): void {
+    if (this.initialized) return;
+    this.initialized = true;
     theme.init();
     this.ensureStatusHost();
 
-    this.session.router.on('route', (route) => this.onRoute(route));
-    this.session.store.on('change', () => this.render());
-    this.session.on('notice', (n) => showToast(n.message, n.kind));
-    this.session.on('statusMessage', (msg) => this.renderStatusBanner(msg));
-    this.session.on('connectionError', (opts) => showConnectionError(opts));
-    this.session.transport.on('reconnected', () => hideConnectionError());
+    this.unsubs.push(this.session.router.on('route', (route) => this.onRoute(route)));
+    // One merged store subscription: update the spinner eagerly, then batch the
+    // DOM render into a single frame so a join burst (many player_data updates)
+    // doesn't trigger N full re-renders.
+    this.unsubs.push(
+      this.session.store.on('change', (snap) => {
+        this.updateSpinner(snap);
+        this.scheduleRender();
+      }),
+    );
+    this.unsubs.push(this.session.on('notice', (n) => showToast(n.message, n.kind)));
+    this.unsubs.push(this.session.on('statusMessage', (msg) => this.renderStatusBanner(msg)));
+    this.unsubs.push(this.session.on('connectionError', (opts) => showConnectionError(opts)));
+    this.unsubs.push(this.session.transport.on('reconnected', () => hideConnectionError()));
+  }
 
-    // Track phase → spinner.
-    this.session.store.on('change', (snap) => {
-      if (snap.phase === 'connecting' || snap.phase === 'reconnecting') {
-        if (!this.connecting) {
-          this.connecting = true;
-          showConnecting(snap.phase === 'connecting' ? 'Connecting...' : 'Reconnecting...');
-        }
-      } else {
-        if (this.connecting) {
-          this.connecting = false;
-          hideConnecting();
-        }
+  /** Tear down every subscription + injected DOM. Safe to call once. */
+  destroy(): void {
+    this.keyboard.detach();
+    for (const off of this.unsubs) {
+      try {
+        off();
+      } catch {
+        // ignore — a transport/session already torn down is fine
       }
-    });
+    }
+    this.unsubs.length = 0;
+    if (this.statusEl?.parentElement) {
+      this.statusEl.parentElement.removeChild(this.statusEl);
+    }
+    this.statusEl = null;
+  }
+
+  /** Coalesce multiple store changes into a single render per frame. */
+  private scheduleRender(): void {
+    if (this.renderScheduled) return;
+    this.renderScheduled = true;
+    const run = (): void => {
+      this.renderScheduled = false;
+      this.render();
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(run);
+    } else {
+      queueMicrotask(run);
+    }
+  }
+
+  private updateSpinner(snap: StoreSnapshot): void {
+    const connecting = snap.phase === 'connecting' || snap.phase === 'reconnecting';
+    if (connecting && !this.connecting) {
+      this.connecting = true;
+      showConnecting(snap.phase === 'connecting' ? 'Connecting...' : 'Reconnecting...');
+    } else if (!connecting && this.connecting) {
+      this.connecting = false;
+      hideConnecting();
+    }
   }
 
   // --- Routing --------------------------------------------------------------
@@ -178,13 +223,20 @@ export class UIController {
 
   private renderStatusBanner(msg: { type: 'warning' | 'error'; message: string } | null): void {
     if (!this.statusEl) return;
+    // Build via DOM + textContent rather than innerHTML — keeps untrusted text
+    // safe without an escape helper and matches the lit-html convention.
+    this.statusEl.replaceChildren();
     if (!msg) {
       this.statusEl.style.display = 'none';
       return;
     }
     this.statusEl.style.display = 'block';
-    this.statusEl.innerHTML = `<div class="connection-indicator ${msg.type}">
-      <span class="connection-text">${msg.message}</span>
-    </div>`;
+    const indicator = document.createElement('div');
+    indicator.className = `connection-indicator ${msg.type}`;
+    const text = document.createElement('span');
+    text.className = 'connection-text';
+    text.textContent = msg.message;
+    indicator.appendChild(text);
+    this.statusEl.appendChild(indicator);
   }
 }

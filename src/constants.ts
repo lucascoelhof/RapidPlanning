@@ -37,7 +37,7 @@ export const TIMING = {
   rejoinMaxDelay: 5_000,
   keepaliveInterval: 15_000,
   healthCheckInterval: 30_000,
-  staleThreshold: 60_000,
+  staleThreshold: 30_000,
   revealDelay: 500,
   keyboardBufferMs: 500,
   rejoinRetryBaseDelay: 1_000,

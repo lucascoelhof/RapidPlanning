@@ -1,4 +1,5 @@
 import { html } from 'lit-html';
+import { repeat } from 'lit-html/directives/repeat.js';
 import { escapeHtml, initials } from '../../utils/dom';
 import type { Player } from '../../app/types';
 
@@ -58,7 +59,11 @@ export function playersTableView(
   return html`
     <table class="players-data-table">
       <tbody>
-        ${players.map((p) => playerRow(p, votesRevealed))}
+        ${repeat(
+          players,
+          (p) => p.id,
+          (p) => playerRow(p, votesRevealed),
+        )}
       </tbody>
     </table>
   `;

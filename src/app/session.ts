@@ -114,6 +114,9 @@ export class Session extends Emitter<SessionEvents> {
   }
 
   private wireConnection(): void {
+    // Drive connection-quality grading from real mesh health instead of a
+    // third-party HTTP probe.
+    this.connection.setHealthProvider(() => this.transport.getHealth());
     this.connection.on('statusChange', () => {
       this.emit('statusMessage', this.connection.getStatusMessage());
     });
@@ -361,6 +364,7 @@ export class Session extends Emitter<SessionEvents> {
   destroy(): void {
     this.cleanup();
     this.connection.destroy();
+    this.errors.destroy();
     this.transport.removeAllListeners();
     this.store.removeAllListeners();
     this.router.removeAllListeners();

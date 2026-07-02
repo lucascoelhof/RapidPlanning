@@ -20,14 +20,25 @@ export interface ConnectionStatus {
   quality: ConnectionQuality;
 }
 
+/**
+ * Transport-derived mesh health, used to grade connection quality instead of
+ * probing a third-party endpoint. See {@link ConnectionMonitor.setHealthProvider}.
+ */
+export interface MeshHealth {
+  /** Open data connections to other peers. */
+  connected: number;
+  /** Connections that answered a recent keepalive / ping. */
+  healthy: number;
+  /** Most recent ping/pong round-trip time (ms), or null if none yet. */
+  lastRtt: number | null;
+}
+
 interface ConnectionMonitorEvents {
   statusChange: [status: ConnectionStatus];
   connectionLost: [];
   connectionRestored: [];
   offlineModeEnabled: [];
 }
-
-const HEALTH_PROBE_URL = 'https://www.gstatic.com/generate_204';
 
 export class ConnectionMonitor extends Emitter<ConnectionMonitorEvents> {
   isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
@@ -37,6 +48,8 @@ export class ConnectionMonitor extends Emitter<ConnectionMonitorEvents> {
   private readonly maxRetryAttempts = 3;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Transport-derived health source; null until the session wires one in. */
+  private healthProvider: (() => MeshHealth | null) | null = null;
 
   // Bound handlers — stored so removeEventListener gets the same reference.
   private readonly handleOnline = (): void => this.setOnline(true);
@@ -81,32 +94,34 @@ export class ConnectionMonitor extends Emitter<ConnectionMonitorEvents> {
     }
   }
 
-  /** HEAD a 204 endpoint to test real connectivity + RTT. */
-  private probe(): void {
-    if (!this.isOnline) return;
-    const started = Date.now();
-    const timer = setTimeout(() => this.recordProbe(false, Date.now() - started), 5_000);
-    fetch(HEALTH_PROBE_URL, { method: 'HEAD', cache: 'no-cache', mode: 'no-cors' })
-      .then(() => {
-        clearTimeout(timer);
-        this.recordProbe(true, Date.now() - started);
-      })
-      .catch(() => {
-        clearTimeout(timer);
-        this.recordProbe(false, Date.now() - started);
-      });
+  /** Inject the transport-derived health source (replaces the HTTP probe). */
+  setHealthProvider(fn: (() => MeshHealth | null) | null): void {
+    this.healthProvider = fn;
   }
 
-  private recordProbe(success: boolean, rttMs: number): void {
-    if (success) {
-      this.quality = rttMs < 1_000 ? 'good' : rttMs < 3_000 ? 'poor' : 'very-poor';
-      this.retryAttempts = 0;
+  /** Grade quality from the current mesh health (no network request needed). */
+  private probe(): void {
+    if (!this.isOnline) return;
+    this.recordMeshHealth(this.healthProvider?.() ?? null);
+  }
+
+  private recordMeshHealth(mesh: MeshHealth | null): void {
+    let next: ConnectionQuality;
+    if (!mesh || mesh.connected === 0) {
+      // Alone in the room (or still connecting) — don't cry wolf. Hard
+      // connection failures are surfaced via the connection-error modal.
+      next = 'good';
     } else {
-      this.retryAttempts++;
-      if (this.retryAttempts >= this.maxRetryAttempts) {
-        this.quality = 'offline';
-      }
+      const allHealthy = mesh.healthy >= mesh.connected;
+      const rtt = mesh.lastRtt;
+      if (rtt === null) next = allHealthy ? 'good' : 'poor';
+      else if (rtt < 250) next = allHealthy ? 'good' : 'poor';
+      else if (rtt < 700) next = 'poor';
+      else next = 'very-poor';
     }
+    if (next === this.quality) return;
+    this.quality = next;
+    if (next === 'good') this.retryAttempts = 0;
     this.emit('statusChange', { isOnline: this.isOnline, quality: this.quality });
   }
 

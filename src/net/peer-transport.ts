@@ -48,6 +48,8 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
   peer: Peer | null = null;
   private connections = new Map<string, DataConnection>();
   private health = new Map<string, Health>();
+  /** Most recent ping/pong round-trip time (ms); null until first pong. */
+  private lastRtt: number | null = null;
   private keepalive: ReturnType<typeof setInterval> | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   isHost = false;
@@ -234,7 +236,8 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
       case 'keepalive':
         return; // already marked seen above
       case 'ping':
-        void this.send(peerId, { type: 'pong', ts: Date.now() });
+        // Echo the sender's timestamp so they can compute RTT on the pong.
+        void this.send(peerId, { type: 'pong', ts: msg.ts });
         return;
       case 'pong': {
         const h = this.health.get(peerId);
@@ -242,6 +245,7 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
           h.healthy = true;
           h.consecutiveFailures = 0;
         }
+        if (typeof msg.ts === 'number') this.lastRtt = Date.now() - msg.ts;
         return;
       }
       case 'peer_list':
@@ -476,6 +480,7 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
     }
     this.connections.clear();
     this.health.clear();
+    this.lastRtt = null;
     this.pendingDials.clear();
     this.cleanupPeer();
   }
@@ -499,6 +504,16 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
     const h = this.health.get(peerId);
     if (!conn) return { connected: false, healthy: false };
     return { connected: conn.open, healthy: h?.healthy ?? true };
+  }
+
+  /**
+   * Snapshot of mesh health for the connection monitor — replaces the old
+   * third-party HTTP probe. Reads local state only, so it's free to call often.
+   */
+  getHealth(): { connected: number; healthy: number; lastRtt: number | null } {
+    let healthy = 0;
+    for (const h of this.health.values()) if (h.healthy) healthy++;
+    return { connected: this.connections.size, healthy, lastRtt: this.lastRtt };
   }
 
   get size(): number {

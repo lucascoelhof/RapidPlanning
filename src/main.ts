@@ -12,7 +12,11 @@ async function bootstrap(): Promise<void> {
   session.router.init();
 
   // Clean up peer connections + intervals when the page is closed/refreshed.
-  window.addEventListener('beforeunload', () => session.cleanup());
+  // `pagehide` fires more reliably than `beforeunload` (especially on mobile);
+  // we register both since cleanup is idempotent.
+  const cleanup = (): void => session.cleanup();
+  window.addEventListener('pagehide', cleanup);
+  window.addEventListener('beforeunload', cleanup);
 
   // Expose for debugging in dev (read-only via console).
   if (import.meta.env.DEV) {

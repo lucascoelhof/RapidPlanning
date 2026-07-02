@@ -87,23 +87,35 @@ const PERSISTED_LOG_SIZE = 10;
 export class ErrorHandler {
   private log: LoggedError[] = [];
   private noticeHandler: ((notice: ErrorNotice) => void) | null = null;
+  /** Bound global listeners, stored so `destroy()` can remove them. */
+  private readonly handleError = (e: ErrorEvent): void => {
+    this.handle(e.error ?? new Error(e.message), {
+      type: 'javascript',
+      filename: e.filename,
+      lineno: e.lineno,
+      colno: e.colno,
+    });
+  };
+  private readonly handleRejection = (e: PromiseRejectionEvent): void => {
+    this.handle(e.reason instanceof Error ? e.reason : new Error(String(e.reason)), {
+      type: 'promise',
+    });
+    e.preventDefault();
+  };
 
   constructor() {
     if (typeof window === 'undefined') return;
-    window.addEventListener('error', (e) => {
-      this.handle(e.error ?? new Error(e.message), {
-        type: 'javascript',
-        filename: e.filename,
-        lineno: e.lineno,
-        colno: e.colno,
-      });
-    });
-    window.addEventListener('unhandledrejection', (e) => {
-      this.handle(e.reason instanceof Error ? e.reason : new Error(String(e.reason)), {
-        type: 'promise',
-      });
-      e.preventDefault();
-    });
+    window.addEventListener('error', this.handleError);
+    window.addEventListener('unhandledrejection', this.handleRejection);
+  }
+
+  /** Remove global listeners. Symmetric with the other services' `destroy()`. */
+  destroy(): void {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('error', this.handleError);
+      window.removeEventListener('unhandledrejection', this.handleRejection);
+    }
+    this.noticeHandler = null;
   }
 
   /** Subscribe to user-facing error notices. Returns an unsubscribe. */
