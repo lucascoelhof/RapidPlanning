@@ -21,13 +21,13 @@
     "test:all": "npm run test && npm run test:e2e"
   },
   "dependencies": {
-    "crypto-js": "^4.2.0",
+    "@types/blueimp-md5": "^2.18.2",
+    "blueimp-md5": "^2.19.0",
     "lit-html": "^3.2.1",
     "peerjs": "^1.5.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.0",
-    "@types/crypto-js": "^4.2.2",
     "@types/node": "^22.7.0",
     "@typescript-eslint/eslint-plugin": "^8.8.0",
     "@typescript-eslint/parser": "^8.8.0",

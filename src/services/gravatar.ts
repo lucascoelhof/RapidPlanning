@@ -1,4 +1,4 @@
-import md5 from 'crypto-js/md5';
+import md5 from 'blueimp-md5';
 import { LINKS } from '../constants';
 import type { PlayerIdentity } from '../app/types';
 
@@ -39,9 +39,12 @@ export function parseIdentity(raw: string): ParsedIdentity {
   return { name: value, email: null, hasEmail: false };
 }
 
-/** MD5-hash an email for Gravatar (lowercased + trimmed, per Gravatar spec). */
+/**
+ * MD5-hash an email for Gravatar (lowercased + trimmed, per Gravatar spec).
+ * `blueimp-md5` returns the hex digest directly (no `.toString()` needed).
+ */
 export function gravatarHash(email: string): string {
-  return md5(email.toLowerCase().trim()).toString();
+  return md5(email.toLowerCase().trim());
 }
 
 /**

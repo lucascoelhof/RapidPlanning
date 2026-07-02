@@ -45,6 +45,12 @@ export class GameStore extends Emitter<StoreEvents> {
   private selectedVote: VoteValue | null = null;
   private selectedReaction: Reaction | null = null;
   private reactionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /**
+   * Handle for the deferred auto-reveal from `checkVotingComplete`. Tracked so
+   * `reset()` / vote changes can cancel a pending reveal instead of leaving a
+   * stray timer that fires after teardown.
+   */
+  private revealTimer: ReturnType<typeof setTimeout> | null = null;
 
   // --- Snapshot -------------------------------------------------------------
 
@@ -163,6 +169,7 @@ export class GameStore extends Emitter<StoreEvents> {
 
   /** Clear everyone's votes. Returns the outbound message, if local-initiated. */
   clearVotes(): { type: 'clear_votes' } {
+    this.cancelReveal();
     this.votesRevealed = false;
     this.selectedVote = null;
     for (const p of this.players.values()) p.vote = null;
@@ -171,6 +178,7 @@ export class GameStore extends Emitter<StoreEvents> {
   }
 
   applyClearVotes(): void {
+    this.cancelReveal();
     this.votesRevealed = false;
     this.selectedVote = null;
     for (const p of this.players.values()) p.vote = null;
@@ -221,8 +229,11 @@ export class GameStore extends Emitter<StoreEvents> {
     const allVoted = Array.from(this.players.values()).every((p) => p.vote !== null);
     if (!allVoted) return;
     this.emit('votingComplete');
+    // Cancel any previously-scheduled reveal (e.g. vote flipped back and forth).
+    if (this.revealTimer) clearTimeout(this.revealTimer);
     // Slight delay for a beat of suspense before flipping cards.
-    setTimeout(() => {
+    this.revealTimer = setTimeout(() => {
+      this.revealTimer = null;
       if (!this.votesRevealed && this.allVoted()) {
         this.applyRevealVotes();
       }
@@ -231,6 +242,14 @@ export class GameStore extends Emitter<StoreEvents> {
 
   private allVoted(): boolean {
     return this.players.size > 0 && Array.from(this.players.values()).every((p) => p.vote !== null);
+  }
+
+  /** Cancel a pending auto-reveal. Safe to call when none is scheduled. */
+  private cancelReveal(): void {
+    if (this.revealTimer) {
+      clearTimeout(this.revealTimer);
+      this.revealTimer = null;
+    }
   }
 
   // --- Reactions ------------------------------------------------------------
@@ -331,6 +350,10 @@ export class GameStore extends Emitter<StoreEvents> {
   reset(): void {
     for (const t of this.reactionTimers.values()) clearTimeout(t);
     this.reactionTimers.clear();
+    if (this.revealTimer) {
+      clearTimeout(this.revealTimer);
+      this.revealTimer = null;
+    }
     this.players.clear();
     this.sessionId = null;
     this._localPeerId = null;

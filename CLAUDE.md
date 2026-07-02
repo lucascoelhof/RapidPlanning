@@ -14,7 +14,7 @@ RapidPlanning is a serverless, peer-to-peer planning estimation web application.
 - **Build:** Vite 7 (real bundled build — tree-shaken, asset-hashed output)
 - **Templating:** lit-html (no web components, just render functions)
 - **P2P transport:** PeerJS (imported from npm, **not** a CDN script tag)
-- **Avatar hashing:** crypto-js (MD5 for Gravatar)
+- **Avatar hashing:** blueimp-md5 (tiny MD5 for Gravatar)
 - **Analytics:** GoatCounter (privacy-friendly, loaded async via CDN, fails open)
 - **Unit tests:** Vitest + happy-dom
 - **E2E tests:** Playwright against local `vite preview`
