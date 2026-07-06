@@ -123,13 +123,21 @@ export class GameStore extends Emitter<StoreEvents> {
     this.emitChange();
   }
 
-  /** Upsert a remote player from a wire `player_data` message. */
+  /**
+   * Upsert a remote player from a wire `player_data` message. Performs
+   * identity-based dedup: if the same human (by email, or name when no email)
+   * is already in the store under a different peerId, the stale row is evicted
+   * immediately. Without this, a peer refresh/rejoin mints a new peerId
+   * (PeerJS gives a random id per connection) and the same user shows up
+   * multiple times until the heartbeat reaps the dead connection (~60s).
+   */
   upsertRemotePlayer(peerId: string, data: {
     name: string;
     email: string | null;
     avatar: string | null;
   }): void {
     if (peerId === this.localPeerId) return; // never trust wire data about self
+    const evicted = this.evictDuplicateIdentities(data.email ?? data.name, peerId);
     const existing = this.players.get(peerId);
     // Apply any vote that arrived ahead of this player_data.
     const heldVote = this.pendingVotes.has(peerId) ? this.pendingVotes.get(peerId) : existing?.vote;
@@ -144,8 +152,28 @@ export class GameStore extends Emitter<StoreEvents> {
       isLocal: false,
     });
     this.emitChange();
-    // A held vote now belongs to a known player — it counts toward completion.
-    if (existing === undefined) this.checkVotingComplete();
+    // A new player, or an evicted stale row, can change voting completion.
+    if (existing === undefined || evicted) this.checkVotingComplete();
+  }
+
+  /**
+   * Remove any remote player whose identity key (email, or name when email is
+   * null) matches `identityKey` but whose peerId differs from `keepPeerId`.
+   * Silent — does not emit; the caller emits once after upserting the fresh
+   * row. The local player is never evicted here.
+   */
+  private evictDuplicateIdentities(identityKey: string, keepPeerId: string): boolean {
+    let removed = false;
+    for (const [existingId, p] of this.players) {
+      if (existingId === keepPeerId || p.isLocal) continue;
+      if ((p.email ?? p.name) === identityKey) {
+        this.clearReactionTimer(existingId);
+        this.pendingVotes.delete(existingId);
+        this.players.delete(existingId);
+        removed = true;
+      }
+    }
+    return removed;
   }
 
   removePlayer(peerId: string): void {
