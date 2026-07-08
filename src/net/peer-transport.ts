@@ -32,6 +32,14 @@ interface Health {
   healthy: boolean;
   lastSeen: number;
   consecutiveFailures: number;
+  /** Timestamp of the last ping we sent; null when not awaiting a pong. */
+  pingSentAt: number | null;
+  /**
+   * Drop-the-peer timer armed when a ping is sent. If no pong (or any data)
+   * arrives within {@link TIMING.pongTimeout}, the connection is declared
+   * dead and dropped — see `probeHealth`. Cleared on pong / any data / drop.
+   */
+  pongTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface PeerTransportEvents {
@@ -188,7 +196,13 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
       return;
     }
     this.connections.set(conn.peer, conn);
-    this.health.set(conn.peer, { healthy: true, lastSeen: Date.now(), consecutiveFailures: 0 });
+    this.health.set(conn.peer, {
+      healthy: true,
+      lastSeen: Date.now(),
+      consecutiveFailures: 0,
+      pingSentAt: null,
+      pongTimer: null,
+    });
     this.emit('peerConnected', conn.peer);
 
     // Host: tell the newcomer about the rest of the mesh so they can dial in.
@@ -220,6 +234,7 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
 
   private dropConnection(peerId: string, allowReconnect: boolean): void {
     const existed = this.connections.delete(peerId);
+    this.clearPongTimer(peerId);
     this.health.delete(peerId);
     if (!existed) return;
     this.emit('peerDisconnected', peerId);
@@ -244,6 +259,11 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
         if (h) {
           h.healthy = true;
           h.consecutiveFailures = 0;
+          h.pingSentAt = null;
+          if (h.pongTimer) {
+            clearTimeout(h.pongTimer);
+            h.pongTimer = null;
+          }
         }
         if (typeof msg.ts === 'number') this.lastRtt = Date.now() - msg.ts;
         return;
@@ -371,7 +391,7 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
   private probeHealth(): void {
     const now = Date.now();
     for (const [id, h] of this.health) {
-      if (!h.healthy) continue;
+      if (!h.healthy) continue; // already awaiting a pong — the pongTimer guards it
       if (now - h.lastSeen <= TIMING.staleThreshold) continue;
       const conn = this.connections.get(id);
       if (!conn?.open) {
@@ -381,9 +401,33 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
       try {
         conn.send(encode({ type: 'ping', ts: now }));
         h.healthy = false; // mark unhealthy until pong arrives
+        h.pingSentAt = now;
+        // Arm a hard deadline: if the peer never answers, drop it ourselves
+        // instead of relying on PeerJS to eventually fire `close` (which can
+        // take minutes or never happen on asymmetric drops). Without this,
+        // silent peers linger with healthy=false and pollute getHealth(),
+        // triggering false "Poor connection" toasts for everyone else.
+        const pingTs = now;
+        h.pongTimer = setTimeout(() => {
+          const cur = this.health.get(id);
+          // Only drop if THIS ping is still the one pending (a pong/data
+          // arriving in the meantime clears pingSentAt).
+          if (cur && cur.pingSentAt === pingTs) {
+            this.dropConnection(id, true);
+          }
+        }, TIMING.pongTimeout);
       } catch {
         this.dropConnection(id, true);
       }
+    }
+  }
+
+  /** Clear an in-flight pong timer for a peer, if any. */
+  private clearPongTimer(peerId: string): void {
+    const h = this.health.get(peerId);
+    if (h?.pongTimer) {
+      clearTimeout(h.pongTimer);
+      h.pongTimer = null;
     }
   }
 
@@ -392,11 +436,20 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
       healthy: true,
       lastSeen: Date.now(),
       consecutiveFailures: 0,
+      pingSentAt: null,
+      pongTimer: null,
     };
     h.lastSeen = Date.now();
     if (healthy) {
       h.consecutiveFailures = 0;
       h.healthy = true;
+      // Any incoming data proves the peer is alive — cancel an in-flight
+      // pong-timeout drop so a late keepalive doesn't get reaped.
+      h.pingSentAt = null;
+      if (h.pongTimer) {
+        clearTimeout(h.pongTimer);
+        h.pongTimer = null;
+      }
     } else {
       h.consecutiveFailures++;
       if (h.consecutiveFailures >= 3) h.healthy = false;
@@ -477,6 +530,9 @@ export class PeerTransport extends Emitter<PeerTransportEvents> {
       } catch {
         // ignore
       }
+    }
+    for (const h of this.health.values()) {
+      if (h.pongTimer) clearTimeout(h.pongTimer);
     }
     this.connections.clear();
     this.health.clear();

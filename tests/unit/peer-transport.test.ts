@@ -489,3 +489,80 @@ describe('PeerTransport — mesh dial retry', () => {
     expect(client.peer).toBeNull();
   });
 });
+
+describe('PeerTransport — pong timeout reaps silent peers', () => {
+  beforeEach(() => {
+    Mock.FakePeer.registry.clear();
+    Mock.FakePeer.created.length = 0;
+  });
+
+  it('drops a peer that never answers a ping within pongTimeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const host = new PeerTransport();
+      const hostP = host.createSession('161616161');
+      const hostPeer = Mock.FakePeer.created[0]!;
+      hostPeer._open();
+      await hostP;
+
+      // Inject a "silent" incoming connection — no partner transport, so any
+      // ping we send is recorded on `sent` but never answered with a pong.
+      const conn = new Mock.FakeDataConnection('silent-peer');
+      const dropped: string[] = [];
+      host.on('peerDisconnected', (id: string) => dropped.push(id));
+      hostPeer._emit('connection', conn);
+      conn._open();
+      expect(host.size).toBe(1);
+
+      // The first health-check (t=30s) sees the peer as exactly staleThreshold
+      // old (30 <= 30 -> not stale); the second (t=60s) exceeds it and pings.
+      await vi.advanceTimersByTimeAsync(TIMING.healthCheckInterval * 2 + 100);
+      expect(
+        conn.sent.some((m) => (m as { type?: string }).type === 'ping'),
+      ).toBe(true);
+      expect(dropped).toHaveLength(0);
+
+      // No pong ever arrives — past pongTimeout the peer is force-dropped
+      // instead of lingering with healthy=false forever.
+      await vi.advanceTimersByTimeAsync(TIMING.pongTimeout + 100);
+      expect(dropped).toEqual(['silent-peer']);
+      expect(host.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels the pending drop when a pong arrives in time', async () => {
+    vi.useFakeTimers();
+    try {
+      const host = new PeerTransport();
+      const hostP = host.createSession('171717171');
+      const hostPeer = Mock.FakePeer.created[0]!;
+      hostPeer._open();
+      await hostP;
+
+      const conn = new Mock.FakeDataConnection('slow-peer');
+      const dropped: string[] = [];
+      host.on('peerDisconnected', (id: string) => dropped.push(id));
+      hostPeer._emit('connection', conn);
+      conn._open();
+
+      // Trigger the ping at the t=60s health-check.
+      await vi.advanceTimersByTimeAsync(TIMING.healthCheckInterval * 2 + 100);
+      expect(
+        conn.sent.some((m) => (m as { type?: string }).type === 'ping'),
+      ).toBe(true);
+
+      // Peer answers the pong well inside the window.
+      await vi.advanceTimersByTimeAsync(TIMING.pongTimeout / 2);
+      conn._emit('data', { v: PROTOCOL_VERSION, type: 'pong', ts: Date.now() });
+
+      // Advance well past the original deadline — must NOT be dropped.
+      await vi.advanceTimersByTimeAsync(TIMING.pongTimeout * 2);
+      expect(dropped).toHaveLength(0);
+      expect(host.size).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

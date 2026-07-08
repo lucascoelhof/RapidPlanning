@@ -38,6 +38,14 @@ export const TIMING = {
   keepaliveInterval: 15_000,
   healthCheckInterval: 30_000,
   staleThreshold: 30_000,
+  /**
+   * How long we wait for a pong after pinging a stale peer before declaring
+   * the connection dead and dropping it. Without this, a peer that goes
+   * silent (closed tab / network drop without firing PeerJS `close`) stays
+   * flagged unhealthy forever and pollutes the mesh health grade, triggering
+   * false "Poor connection" toasts.
+   */
+  pongTimeout: 10_000,
   revealDelay: 500,
   keyboardBufferMs: 500,
   rejoinRetryBaseDelay: 1_000,
